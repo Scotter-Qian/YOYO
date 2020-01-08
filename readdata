@@ -1,0 +1,93 @@
+import os
+import xml.etree.ElementTree as ET
+
+classes = ["leakage"]
+
+def write_path_file():
+    f1 = open(r"D:\YOLO\data\train", "w")
+    f2 = open(r"D:\YOLO\data\label_path", "w")
+    path1 = r"D:\YOLO\data\Images"
+    path2 = r"D:\YOLO\data\Annotations"
+    for file1 in os.listdir(path1):
+        path_file1 = os.path.join(path1, file1)
+        f1.write(path_file1 + "\n")                #没有用到，可以删除
+    for file2 in os.listdir(path2):
+        #path_file2 = os.path.join(path2, file2)
+        f2.write(file2.strip(".xml") + "\n")
+    f1.close()
+    f2.close()
+
+
+#获取所需的类名和id
+def get_classes_and_index(path):
+    s ={}
+    with open(path, "r") as fp:
+        data = fp.readlines()
+    data = [line.strip() for line in data]
+    for index, classes in enumerate(data):
+        s[classes] = index
+    return s
+
+
+#convert the ROI coordinates to the coordinates that yolo needs
+#返回值为ROI中心点相对于图片大小的比例坐标，和roi的w、h相对于图片大小的比例
+def convert_coordinates(size, box):
+    import numpy as np
+    dw = np.round(1.0/size[0], 4)
+    dh = np.round(1.0/size[1], 4)
+    box_centroid_x = (box[0] + box[1])/2.0
+    box_centroid_y = (box[2] + box[3])/2.0
+    box_w = box[1] - box[0]
+    box_h = box[3] - box[2]
+    relative_x = box_centroid_x * dw
+    relative_y = box_centroid_y * dh
+    relative_w = box_w * dw
+    relative_h = box_h * dh
+    return (relative_x, relative_y, relative_w, relative_h)
+
+
+#convert the xml file to txt file that yolo needs
+def convert_xml(path, image):
+    input_file = open("%s\Annotations\%s.xml"%(path, image))#与图片对应的xml文件的地址
+    output_file = open("%s\labels\%s.txt"%(path, image), "w")#将此xml对应的转换后的txt文件的完整路径保存的文件地址
+    path_classes = r"D:\YOLO\data\classes"
+    classes = get_classes_and_index(path_classes)
+    print(classes)
+    tree = ET.parse(input_file)
+    #get the root node
+    root = tree.getroot()
+    size = root.find("size")
+    w = int(size.find("width").text)
+    h = int(size.find("height").text)
+    for child in root.iter("object"):
+        name = child.find("name").text
+        print(name)
+        name_index = classes[name]
+        box = child.find("bndbox")
+        coordinates = (float(box.find("xmin").text),
+                       float(box.find("xmax").text),
+                       float(box.find("ymin").text),
+                       float(box.find("ymax").text))
+        relative_coordinates = convert_coordinates((w, h), coordinates)
+        print(relative_coordinates)
+        output_file.write(str(name_index) + " " + " ".join([str(a) for a in relative_coordinates]) + "\n")
+    output_file.close()
+
+if __name__=="__main__":
+    write_path_file()
+    path = "D:\YOLO\data"
+    image_ids = open("D:\YOLO\data\label_path")
+    for image_id in image_ids:
+        image_id = image_id.strip()
+        convert_xml(path, image_id)
+
+
+
+
+
+
+
+
+
+
+
