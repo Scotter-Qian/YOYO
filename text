@@ -1,0 +1,98 @@
+import tensorflow as tf
+import numpy as np
+import cv2
+
+
+"""
+tensor = [0,1,2,3]
+tensor2 = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+mask = np.array([True, False, True, False])
+
+with tf.Session() as sess:
+    print(sess.run(tf.boolean_mask(tensor2, mask)))
+    print(sess.run(tf.logical_not(mask)))
+"""
+"""
+anchors = [[0.57273, 0.677385], [1.87446, 2.06253], [3.33843, 5.47434], [7.88282, 3.52778], [9.77052, 9.16828]]
+B = len(anchors)
+anchors = tf.constant(anchors, dtype=tf.float32)
+anchors = tf.reshape(anchors, [1, 1, B, 2])
+print(np.reshape([13, 13], [1, 1, 1, 2]))
+
+image = cv2.imread(r'D:\YOLO\data\0_data\image(00001).jpg', cv2.IMREAD_GRAYSCALE)
+#print(image)
+image = tf.reshape(image, [1, 288, 384, 1])
+#image = np.array([[1,2],[3,4],[5,6]])
+#image_1 = tf.reshape(image, [1, 3, 2, 1])
+
+image_2 = image*np.reshape([13, 13], [1, 1, 1, 2])
+print(image_2.get_shape())
+
+with tf.Session() as sess:
+    print(sess.run(image))
+    print(sess.run(image_2))
+    print(sess.run(image_2[0:2]))
+    #print(sess.run(anchors))
+"""
+
+from sklearn.metrics import roc_curve,auc
+import matplotlib.pyplot as plt
+
+def TP_FN_FP(label, pre):
+    TP = np.sum(np.logical_and(pre==1, label==1))
+    FP = np.sum(np.logical_and(pre==1, label==0))
+    FN = np.sum(np.logical_and(pre==0, label==1))
+    TN = np.sum(np.logical_and(pre==0, label==0))
+    TPR = TP/(TP+FN)
+    FPR = FP/(TN+FP)
+    return TPR, FPR
+
+y_true = np.array([0,0,1])
+scores = np.array([0.97,0.98,0.99])
+_scores = sorted(scores, reverse=True)
+print(_scores)
+
+FPR_SET = []
+TPR_SET = []
+for i in _scores:
+    y_pre = (scores>i).astype(int)
+    print(y_pre)
+    TPR, FPR = TP_FN_FP(y_true, y_pre)
+    print(FPR,TPR)
+    FPR_SET.append(FPR)
+    TPR_SET.append(TPR)
+FPR_SET = np.array(FPR_SET)
+TPR_SET = np.array(TPR_SET)
+
+AUC = auc(FPR_SET, TPR_SET)
+plt.figure(figsize=(8,6))
+plt.plot(FPR_SET[:],TPR_SET[:],"b",linewidth=2.0,label="AUC=%0.5f"%AUC)
+plt.plot((0,1),(0,1),linestyle="--",linewidth=2.0)
+plt.xlim([-0.05, 1.05])
+plt.ylim([-0.05, 1.05])
+plt.title("ROC Curve", fontsize=18)
+plt.xlabel("False Positive Rate", fontsize=16)
+plt.ylabel("True Positive Rate", fontsize=16)
+plt.legend()
+plt.show()
+
+"""
+FPR, TPR, thresholds = roc_curve(y_true, scores)
+print(FPR)
+print(TPR)
+print(thresholds)
+AUC = auc(FPR, TPR)
+plt.figure(figsize=(8,6))
+plt.plot(FPR[:],TPR[:],"b",linewidth=2.0,label="AUC=%0.5f"%AUC)
+plt.plot((0,1),(0,1),linestyle="--",linewidth=2.0)
+plt.xlim([-0.05, 1.05])
+plt.ylim([-0.05, 1.05])
+plt.title("ROC Curve", fontsize=18)
+plt.xlabel("False Positive Rate", fontsize=16)
+plt.ylabel("True Positive Rate", fontsize=16)
+plt.legend()
+plt.show()
+"""
+
+
+
