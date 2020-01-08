@@ -1,0 +1,79 @@
+import os
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+
+
+#write images and label into tfrecord
+def encode_to_tfrecords(path, max_object_num ):
+    writer = tf.python_io.TFRecordWriter("train.tfrecords")
+    with open(path, 'r') as f1:
+        image_paths = f1.readlines()
+        for image_path in image_paths:
+            image_path = image_path.strip()
+            image = Image.open(image_path)
+            image = image.resize((288, 384))
+            image_raw = image.tobytes()
+
+            label_path = image_path.replace("Images", "labels")
+            label_path = label_path.replace(".jpg", ".txt")
+            with open(label_path, "r") as f2:
+                lines = f2.readlines()
+                label = np.zeros((max_object_num, 5))
+                for index, line in enumerate(lines):
+                    label[index, :] = [float(line) for line in line.strip("\n").split( )]
+            print(label)
+            label_raw = label.tobytes()
+
+            example = tf.train.Example(
+                features=tf.train.Features(feature={
+                    "image":tf.train.Feature(bytes_list=tf.train.BytesList(value=[image_raw])),
+                    "label":tf.train.Feature(bytes_list=tf.train.BytesList(value=[label_raw]))}))
+            writer.write(example.SerializeToString())
+            f2.close()
+    f1.close()
+    writer.close()
+
+def read_file(path, filename):
+    encode_to_tfrecords(path, 5)
+    #generate a queue according to the filename
+    filename_queue = tf.train.string_input_producer([filename])
+    #create a reader from file queue
+    reader = tf.TFRecordReader()
+    #read the file name and file from filename_queue, saved in serialized_example
+    _, serialized_example = reader.read(filename_queue)
+    #get feature from batch
+    features = tf.parse_single_example(serialized_example, features={"image": tf.FixedLenFeature([], tf.string),
+                                                        "label": tf.FixedLenFeature([], tf.string)})
+
+    image = tf.decode_raw(features["image"], tf.uint8)
+    image = tf.cast(tf.reshape(image, [288, 384, 1]), tf.float32)
+    image = image/255.0
+
+    label_raw = tf.decode_raw(features["label"], tf.float32)
+    label = tf.cast(tf.reshape(label_raw, [2, 5, 5]), tf.float32)
+    return image, label
+
+if __name__=="__main__":
+    path = "D:\\YOLO\\data\\train"
+    file_name = "train.tfrecords"
+    batch_size = 50
+    image, label = read_file(path, file_name)
+    Num_interates = 1
+    #create batches
+    image_batch, label_batch = tf.train.shuffle_batch(tensors=[image, label], batch_size=batch_size,
+                                   capacity=100, min_after_dequeue=batch_size, num_threads=2)
+    init = tf.global_variables_initializer()
+    sess = tf.Session()
+    sess.run(init)
+    coord = tf.train.Coordinator()
+    threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+    for i in range (Num_interates):
+        ima, lab = sess.run([image_batch, label_batch])
+        print(ima,"\n", lab[0:50, 0, :])
+    coord.request_stop()
+    coord.join(threads)
+    sess.close()
+
+
+
