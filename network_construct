@@ -1,0 +1,166 @@
+import tensorflow as tf
+
+def lrelu(input, alpha):
+    return tf.maximum(input, alpha*input, name='lrelu')
+
+def max_pooling(input, size, stride, name):
+    return tf.layers.max_pooling2d(input, size, stride, padding="SAME", name=name)
+
+def conv_layer(input, kernel_size, filters, name, training, batch_normalize):
+    with tf.variable_scope(name):
+        x = tf.layers.conv2d(inputs=input, kernel_size=kernel_size, filters=filters, strides=(1,1),
+                                  padding="SAME", kernel_initializer=tf.contrib.layer.xavier_initializer_conv2d(),
+                                  bias_initializer=tf.zeros_initializer())
+        if batch_normalize:
+            output = tf.layers.batch_normalization(inputs=x, training=training, momentum=0.99,
+                                               epsilon=1e-3, center=True, scale=True)
+        else:
+            output = x
+    return output
+
+def merge_layer(input_1, input_2, kernel_size, filters, block_size, name, training, batch_normalize):
+    input_2 = conv_layer(input_2, kernel_size, filters, name, training, batch_normalize)
+    input_2 = tf.space_to_depth(input_2, block_size)
+    output = tf.concat([input_1, input_2], axis=3)
+    return output
+
+
+
+def vgg_net(input, training):
+    output_1 = conv_layer(input, (3,3), 32, name="conv_1", training=training, batch_normalize=True)
+    output_pool_1 = max_pooling(output_1, (2,2), (2,2), name="max_pooling_1")
+    output_2 = conv_layer(output_pool_1, (3,3), 64, name="conv_2", training=training, batch_normalize=True)
+    output_pool_2 = max_pooling(output_2, (2,2), (2,2), name="max_pooling_2")
+
+    output_3 = conv_layer(output_pool_2, (3,3), 128, name="conv_3", training=training, batch_normalize=True)
+    output_4 = conv_layer(output_3, (1, 1), 64, name="conv_4", training=training, batch_normalize=True)
+    output_5 = conv_layer(output_4, (3, 3), 128, name="conv_5", training=training, batch_normalize=True)
+    output_pool_3 = max_pooling(output_5, (2, 2), (2, 2), name="max_pooling_3")
+
+    output_6 = conv_layer(output_pool_3, (3, 3), 256, name="conv_6", training=training, batch_normalize=True)
+    output_7 = conv_layer(output_6, (1, 1), 128, name="conv_7", training=training, batch_normalize=True)
+    output_8 = conv_layer(output_7, (3, 3), 256, name="conv_8", training=training, batch_normalize=True)
+    output_pool_4 = max_pooling(output_8, (2, 2), (2, 2), name="max_pooling_4")
+
+    output_9 = conv_layer(output_pool_4, (3, 3), 512, name="conv_9", training=training, batch_normalize=True)
+    output_10 = conv_layer(output_9, (1, 1), 256, name="conv_10", training=training, batch_normalize=True)
+    output_11 = conv_layer(output_10, (3, 3), 512, name="conv_11", training=training, batch_normalize=True)
+    output_12 = conv_layer(output_11, (1, 1), 256, name="conv_12", training=training, batch_normalize=True)
+    output_13 = conv_layer(output_12, (3, 3), 512, name="conv_13", training=training, batch_normalize=True)
+    output_pool_5 = max_pooling(output_13, (2, 2), (2, 2), name="max_pooling_5")
+
+    output_14 = conv_layer(output_pool_5, (3, 3), 1024, name="conv_14", training=training, batch_normalize=True)
+    output_15 = conv_layer(output_14, (1, 1), 512, name="conv_15", training=training, batch_normalize=True)
+    output_16 = conv_layer(output_15, (3, 3), 1024, name="conv_16", training=training, batch_normalize=True)
+    output_17 = conv_layer(output_16, (1, 1), 512, name="conv_17", training=training, batch_normalize=True)
+    output_18 = conv_layer(output_17, (3, 3), 1024, name="conv_18", training=training, batch_normalize=True)
+
+    output_19 = conv_layer(output_18, (3, 3), 1024, name="conv_19", training=training, batch_normalize=True)
+    output_20 = conv_layer(output_19, (3, 3), 1024, name="conv_20", training=training, batch_normalize=True)
+    output_21 = merge_layer(output_20, output_13, (3,3), 64, 2, name="conv21", training=training, batch_normalize=True)
+    #print(output_21)
+    output_22 = conv_layer(output_21, (3,3), 1024, name="conv22", training=training, batch_normalize=True)
+    output_23 = conv_layer(output_22, (1,1), anchor_num*(class_num+5), name="conv23", training=training, batch_normalize=False)
+    #5是x,y,w,h和类别c的置信度
+    output = tf.reshape(output_23, shape=(-1, grid_h, grid_w, anchor_num, class_num+5), name="output")
+    return output
+
+def yolo_loss(pred, label, lambda_coord, lambda_noobj):
+    mask = label[..., 5:6]
+    label = label[..., 0:5]
+    mask = tf.cast(tf.reshape(mask, shape=(-1, grid_h, grid_w, anchor_num)))
+    with tf.name_scope("mask"):
+        masked_label = tf.boolean_mask(label, mask)
+        masked_pred = tf.boolean_mask(pred, mask)
+        no_masked_pred = tf.boolean_mask(pred, tf.logical_not(mask))
+    with tf.name_scope("pred"):
+        masked_pred_xy = tf.sigmoid(masked_pred[..., 0:2])#中心坐标相对于该cell左上角的偏移量，用sigmoid函数归一化到0-1
+        masked_pred_wh = tf.exp(masked_pred[..., 2:4])#相对于anchor的wh，通过e指数解码
+        masked_pred_obj = tf.sigmoid(masked_pred[..., 4:5])#置信度，sigmoid函数归一化到0-1
+        masked_pred_noobj = tf.sigmoid(no_masked_pred[..., 4:5])
+        masked_pred_c = tf.nn.softmax(masked_pred[..., 5:])#用softmax转换成类别得分
+    with tf.name_scope("label"):
+        masked_label_xy = masked_label[..., 0:2]
+        masked_label_wh = masked_label[..., 2:4]
+        masked_label_c =  masked_label[..., 4:5]
+        #用于计算分类误差项
+        masked_label_c_vec = tf.reshape(tf.one_hot(tf.cast(masked_label_c, tf.int32), depth=class_num), shape=(-1, class_num))
+    with tf.name_scope("merge"):
+        with tf.name_scope("loss_xy"):
+            loss_xy = tf.reduce_sum(tf.square(masked_pred_xy - masked_label_xy))
+        with tf.name_scope("loss_wh"):#改动
+            loss_wh = tf.reduce_sum(tf.square(tf.sqrt(masked_pred_wh) - tf.sqrt(masked_label_xy)))
+        with tf.name_scope("loss_obj"):
+            loss_obj = tf.reduce_sum(tf.square(masked_pred_obj - 1))#???
+        with tf.name_scope("loss_noobj"):
+            loss_noobj = tf.reduce_sum(tf.square(masked_pred_noobj))#???
+        with tf.name_scope("loss_class"):
+            loss_c = tf.reduce_sum(tf.square(masked_pred_c - masked_label_c_vec))
+        loss = lambda_coord*(loss_xy + loss_wh) + loss_obj + lambda_noobj*loss_noobj + loss_c
+    return loss
+
+
+def train():
+    #从tfrecord中读取数据
+    from make_tfrecord import read_file
+    import os
+
+    path = r"D:\YOLO\data"
+    filename = "train.tfrecords"
+    ima, lab = read_file(path, filename)
+    batch_size = 50
+    image_batch, label_batch = tf.train.shuffle_batch(tensors=[ima, lab], batch_size=batch_size,
+                                                      capacity=100, min_after_dequeue=batch_size, num_threads=2)
+
+
+    image = tf.placeholder(dtype=tf.float32, shape=[None, IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_DEPTH], name="image_placeholder")
+    label = tf.placeholder(dtype=tf.float32, shape=[None, grid_h, grid_w, anchor_num, 6], name="label_placeholder")
+    training = tf.placeholder(dtype=tf.bool, name="bool_placeholder")
+
+    output = vgg_net(image, training=training)
+    loss = yolo_loss(output, label, lambda_coord, lambda_noobj)
+    init = tf.global_variables_initializer()
+    sess = tf.Session()
+    sess.run(init)
+    saver = tf.train.Saver()
+    threads = tf.train.start_queue_runners(sess=sess, coord=tf.train.Coordinator)
+    for i in range(num_epoches):
+        image_data, label_data = sess.run([image_batch, label_batch])
+        output_data, loss_data = sess.run([training, output, loss], feed_dict={training:True, image:image_data, label:label_data})
+        print("iter:{}...".format(i), "loss:{}...".format(loss_data))
+
+        if (i+1)%save_rate==0 or (i+1)==num_epoches:
+            if not os.path.exists(model_path):
+                os.makedirs(model_path)
+            saver.save(sess, os.path.join(model_path, 'yolo'), global_step=i+1)
+    sess.close()
+
+if __name__=="__main__":
+    anchor_num = 5
+    class_num = 2
+    grid_h = 9
+    grid_w = 12
+    IMAGE_HEIGHT = 288
+    IMAGE_WIDTH = 384
+    IMAGE_DEPTH = 1
+    lambda_coord = 5
+    lambda_noobj = 0.5
+    num_epoches = 1000
+    save_rate = 400
+    model_path = "./train_model"
+    train()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
