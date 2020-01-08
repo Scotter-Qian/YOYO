@@ -1,0 +1,146 @@
+import xml.etree.ElementTree as ET
+import numpy as np
+
+
+
+#box_1、box_2 is shape [x, y, w, h]
+def calculate_iou(box_1, box_2):
+    #计算两box的重叠面积
+    left_up_x = max(box_1[0]-box_1[2]/2.0, box_2[0]-box_2[2]/2.0)
+    left_up_y = min(box_1[1]+box_1[3]/2.0, box_2[1]+box_2[3]/2.0)
+    right_down_x = min(box_1[0]+box_1[2]/2.0, box_2[0]+box_2[2]/2.0)
+    right_down_y = max(box_1[1]-box_1[3]/2.0, box_2[1]-box_2[3]/2.0)
+    inter_w = max(right_down_x-left_up_x, 0.0)
+    inter_h = max(left_up_y-right_down_y, 0.0)
+    area_inter = inter_w * inter_h
+    #print(area_inter)
+    #计算两box的并集
+    area_union = box_1[2] * box_1[3] + box_2[2] * box_2[3] - area_inter
+    #print(area_union)
+    #计算两Box的交并比
+    iou = round(area_inter/area_union, 4)
+    return iou
+
+
+#boxes=[(x1, y1, w1, h1), (x2, y2, w2, h2),...]
+def init_centroids(boxes, n_anchors):    #n_anchors 是k-means的k值
+    centroids = []
+    import numpy as np
+    #从数据集中随机选取一个样本作为初始聚类中心c1;
+    centroid_index = np.random.choice(len(boxes), 1)
+    centroids.append(boxes[centroid_index[0]])
+    print(centroids[0])
+
+    for centroid_index in range(0, n_anchors-1):
+        sum_iou = 0
+        iou_list = []
+        # 计算每个样本与当前已有聚类中心之间的最小iou值
+        for box in boxes:
+            min_iou = 1
+            for centroid in centroids:
+                iou = (1 - calculate_iou(box, centroid))
+                if iou < min_iou:
+                    min_iou = iou
+            sum_iou += min_iou
+            iou_list.append(min_iou)
+        #随机产生一个iou_thres值
+        iou_thresh = sum_iou * np.random.random()
+        #计算前i个最小iou值的和，如果大于阈值，便将第i个box添加至centroids中
+        cur_sum = 0
+        for i in range(0, len(boxes)):
+            cur_sum += iou_list[i]
+            if cur_sum > iou_thresh:
+                centroids.append(boxes[i])
+                break
+    return centroids
+
+
+def do_k_means(boxes, n_anchors, centroids):
+    #进行k-means计算新的centroids
+    loss = 0    #返回值是所有box距离所属的最近的centroid的距离的和
+    groups =[]  #返回值groups是n_anchors个簇包含的boxes列表
+    new_centroids = []  #计算出的新簇中心
+    #初始化groups和new_centroids
+    for i in range(n_anchors):
+        groups.append([])
+        new_centroids.append((0, 0, 0, 0))
+    #计算每个box与所属簇中心的iou值等
+    for box in boxes:
+        min_iou = 1
+        group_index = 0
+        for centroid_index, centroid in enumerate(centroids):
+            iou = 1 - calculate_iou(box, centroid)
+            if iou < min_iou:
+                min_iou = iou
+                group_index = centroid_index
+        groups[group_index].append(box)
+        loss += min_iou
+        #print(new_centroids[group_index])
+        new_centroids = np.array(new_centroids)                 #????????
+        new_centroids[group_index][2] += box[2]
+        #print(new_centroids)
+        new_centroids[group_index][3] += box[3]
+
+    for i in range(n_anchors):
+        new_centroids[i][2] /= len(groups[i])
+        new_centroids[i][3] /= len(groups[i])
+
+    return new_centroids, groups, round(loss,4)
+
+
+#label_path是训练集列表文件地址
+#loss_convergence是允许的最小的变化值
+#grid_size*grid_size是栅格数量
+#iterations_num是迭代的最大次数
+def calculate_centroids(label_path, n_anchors, loss_convergence, grid_size, iterations_num):
+    #计算给定bounding boxes的n_anchors数量的centroids
+    label_files = []
+    f = open(label_path)
+    for line in f:
+        label_path = line.rstrip( ).replace("images", "labels")
+        label_path = label_path.replace(".jpg", ".txt")
+        label_files.append(label_path)
+    f.close()
+    boxes = []
+    for label_file in label_files:
+        f = open(label_file)
+        for line in f:
+            temp = line.strip().split(" ")
+            if len(temp) > 1:
+                boxes.append((0, 0, float(temp[3]), float(temp[4])))
+    centroids = init_centroids(boxes, n_anchors)
+    centroids, groups, old_loss = do_k_means(boxes, n_anchors, centroids)
+    iterations = 1
+    while (True):
+        centroids, groups, loss = do_k_means(boxes, n_anchors, centroids)
+        iterations = iterations + 1
+        if abs(old_loss - loss) < loss_convergence or iterations > iterations_num:
+            break
+        old_loss = loss
+        for centroid in centroids:
+            print(centroid[2]*grid_size, centroids[3]*grid_size)
+    #print result
+    for centroid in centroids:
+        print("k-means result:\n")
+        print(centroid[2]*grid_size, centroid[3]*grid_size)
+
+
+if __name__ == "__main__":
+    path_data = r"D:\YOLO\data\1_data"
+    image = "image(00044)"
+    #convert_xml(path_data, image)
+    """
+    box_1 = [2.0, 2.0, 4.0, 4.0]
+    box_2 = [5.0, 5.0, 4.0, 4.0]
+    print(calculate_iou(box_1, box_2))
+    """
+    #boxes = [(2.5, 2.5, 3, 3), (4.5, 2.5, 3, 3), (3.5, 2.5, 3, 3), (10, 10, 3, 3), (11, 11, 3, 3),
+             #(25, 25, 3, 3), (24, 24, 3, 3)]
+
+    label_path = "..."
+    n_anchors = 5
+    loss_convergence = 1e-6
+    grid_size = 13
+    iterations_num = 100
+    calculate_centroids(label_path, n_anchors, loss_convergence, grid_size, iterations_num)
+
