@@ -1,0 +1,148 @@
+import tensorflow as tf
+
+#box_1、box_2 is shape [x, y, w, h]
+def calculate_iou(box_1, box_2):
+    #计算两box的重叠面积
+    left_up_x = max(box_1[0]-box_1[2]/2.0, box_2[0]-box_2[2]/2.0)
+    left_up_y = min(box_1[1]+box_1[3]/2.0, box_2[1]+box_2[3]/2.0)
+    right_down_x = min(box_1[0]+box_1[2]/2.0, box_2[0]+box_2[2]/2.0)
+    right_down_y = max(box_1[1]-box_1[3]/2.0, box_2[1]-box_2[3]/2.0)
+    inter_w = max(right_down_x-left_up_x, 0.0)
+    inter_h = max(left_up_y-right_down_y, 0.0)
+    area_inter = inter_w * inter_h
+    #print(area_inter)
+    #计算两box的并集
+    area_union = box_1[2] * box_1[3] + box_2[2] * box_2[3] - area_inter
+    #print(area_union)
+    #计算两Box的交并比
+    iou = round(area_inter/area_union, 4)
+    return iou
+
+#对输出值的一个解码
+#anchors中的值就是先验框的大小
+def preprocess_output_data(output, anchors):
+    #得到输出图片分h,w
+    h = output.get_shape()[1]
+    w = output.get_shape()[2]
+
+    #计算偏移量
+
+    output = tf.reshape(output, [-1, h*w, 5, 6])    #shape = [-1, h*w, len(anchors_num), classes+1]
+    xy_offset = tf.nn.sigmoid(output[...,0:2])
+    wh_offset = tf.exp(output[...,2:4])
+    #计算置信度
+    object_probability = tf.nn.sigmoid(output[...,4])
+    #计算类别得分
+    classes_probability = tf.nn.softmax(output[..., 5:])
+
+    #构建特征图的每个cell左上角的xy坐标
+    height_index = tf.range(h, dtype=tf.float32)
+    width_index = tf.range(w, dtype=tf.float32)
+    x_cell, y_cell = tf.meshgrid(height_index, width_index)
+    x_cell = tf.reshape(x_cell, [1, -1, 1])
+    y_cell = tf.reshape(y_cell, [1, -1, 1])
+
+    #解码, p_w/p_h分别是anchor[:,0]/anchors[:,1]
+    #b_x = (σ(t_x) + c_x) / W
+    #b_y = (σ(t_y) + c_y) / H
+    #b_w = p_w*e ^ (t_w) / W
+    #b_h = p_h*e ^ (t_h) / H
+    bx = (x_cell + xy_offset[..., 0])/w
+    by = (y_cell + xy_offset[..., 1])/h
+    bw = (anchors[:,0] * wh_offset[..., 0])/w
+    bh = (anchors[:,1] * wh_offset[..., 1])/h
+    locations = tf.stack([bx, by, bw, bh], axis=3)
+
+    return locations, object_probability, classes_probability
+
+#算法过程：
+#首先从所有的检测框中找到置信度最大的那个框，然后挨个计算其与剩余框的IOU
+#如果其值大于一定阈值（重合度过高），那么就将该框剔除，然后对剩余的检测框
+#重复上述过程，直到处理完所有的检测框；
+import numpy as np
+def nms(locations, object_probability, classes_probability, threshold):
+    #将Locations的位置还原到原图的位置
+    locations = np.reshape(locations, [-1,4])
+    locations[:,0] = locations[:,0] * 384   #width=384, hieght=288
+    locations[:,1] = locations[:,1] * 288
+    locations[:,2] = locations[:,2] * 384
+    locations[:,3] = locations[:,3] * 288
+    locations = locations.astype(np.int32)
+
+    #计算类别置信度scores
+    object_probability = np.reshape(object_probability, [-1])
+    classes_probability = np.reshape(classes_probability, [len(object_probability), -1])
+    #得到最大类别概率的维度
+    classes_max_index = np.argmax(classes_probability, axis=1)
+    class_probability = classes_probability[np.arange(len(object_probability)), classes_max_index]
+    scores = object_probability *  class_probability
+
+    #保留scores>threshold的边界框
+    keep_index = scores > threshold
+    scores = scores[keep_index]
+    locations = locations[keep_index]
+
+    #排序top_k=400
+    reversed_index = np.argsort(-scores)
+    scores = scores[reversed_index][:400]
+    locations = locations[reversed_index][:400]
+
+    #nms算法
+    keep_locations = np.zeros(len(scores))
+    for i in range(len(scores)-1):
+        iou = calculate_iou(locations[i], locations[(i+1):])
+        keep_iou = iou < threshold
+        keep_locations[(i+1):] = np.logical_and(keep_locations[(i+1):], keep_iou)
+    idxes = np.where(keep_locations)
+
+    return scores[idxes], locations[idxes]
+
+import cv2
+def draw(img, locations, scores):
+    image = np.copy(img)
+    for i, location in enumerate(locations):
+        cv2.rectangle(image,(location[0]-location[2]/2, location[1]-location[3]/2),
+                      (location[0]+location[2]/2, location[1]+location[3]/2), (0, 255, 0), thickness=2)
+        text = "%s:%.3f"%("leakage", scores[i])
+        text_location = (location[0]-location[2]/2 + 2, location[1]-location[3]/2 + 15)
+        cv2.putText(image, text, text_location, cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 255, 0), 2)
+    return image
+
+def test():
+    sess = tf.Session()
+    saver = tf.train.import_meta_graph("./yolo-4000.meta")
+    saver.restore(sess, "yolo-4000")#checkpoint里的path
+
+    graph = tf.get_default_graph()
+    image = graph.get_tensor_by_name("image_placeholder:0")
+    #label = graph.get_tensor_by_name("label_placeholder:0")
+    training = graph.get_tensor_by_name("bool_placeholder:0")
+
+    output = graph.get_tensor_by_name("net/output:0")
+
+    image_path = ".../"
+    image_data = cv2.imread(image_path)
+    image_data = image_data/255.0
+
+    output_data = sess.run(output, feed_dict={image: image_data, training: False})
+    anchors = ""
+    threshold = 0.5
+    locations, object_probability, classes_probability = preprocess_output_data(output, anchors)
+    score, location = nms(locations, object_probability, classes_probability, threshold)
+    img = draw(image_data, location, score)
+
+    cv2.imwrite("./yolo2_data/detection.jpg", img)
+    print("YOLO_v2 detection has done")
+    cv2.imshow("image", img)
+    cv2.waitKey(0)
+
+if __name__=="__main__":
+    test()
+
+
+
+
+
+
+
+
