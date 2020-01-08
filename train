@@ -1,0 +1,92 @@
+import numpy as np
+import tensorflow as tf
+
+
+"""
+path = "D:\\YOLO\\data\\1_data\\image(00045).jpg"
+f = open(path, 'r')
+label_file = []
+for line in f:
+    label_path = line.rstrip().replace("image", "label")
+    #print(label_path)
+    label_path = label_path.replace(".jpg", ".txt")
+    #print(label_path)
+    label_file.append(label_path)
+f.close()
+print(label_file)
+"""
+
+"""
+import os
+wd = os.getcwd()
+data_path = 0
+for dir in os.listdir(wd):
+    if dir == "data":
+        data_path = os.path.join(wd, dir)
+        for _data in os.listdir(data_path):
+            if _data =="1_data":
+                data_path = os.path.join(data_path, _data)
+f = open("D:\\YOLO\\data\\list_data_set", "w")
+for image_path in os.listdir(data_path):
+    if image_path.endswith(".jpg"):
+        f.write(os.path.join(data_path, image_path) + "\n")
+f.close()
+"""
+
+"""
+a = np.random.randn(1, 9, 12, 5, 6)
+print(a)
+b = a[..., 5]
+c = a[..., 0:5]
+mask = tf.cast(tf.reshape(b, shape=(-1, 9, 12, 5)), tf.bool)
+mask_c = tf.boolean_mask(c, mask)
+
+with tf.Session() as sess:
+    #print(b, "\n", b.shape)
+    print(c, "\n", c.shape)
+    #print(sess.run(mask))
+    print(sess.run(mask_c))
+"""
+"""
+path = r"D:\YOLO\data\labels\image(00083).txt"
+with open(path) as f:
+    s = np.zeros((5, 5))
+    lines = f.readlines()
+    for index, line in enumerate(lines):
+        s[index, :] = [float(line) for line in line.strip("\n").split( )]
+    print(s)
+"""
+
+"""
+grid_h = 9
+grid_w = 12
+n_anchors = 5
+
+height_index = tf.range(grid_h, dtype=tf.float32)
+width_index = tf.range(grid_w, dtype=tf.float32)
+
+x_cell, y_cell = tf.meshgrid(height_index, width_index)
+x_cell = tf.reshape(x_cell, [-1, 1])
+y_cell = tf.reshape(y_cell, [-1, 1])
+boxes = tf.stack([x_cell, y_cell], axis=2)
+
+init = tf.global_variables_initializer()
+sess = tf.Session()
+sess.run(init)
+print(sess.run(x_cell))
+print(sess.run(y_cell))
+print(sess.run(boxes))
+"""
+scores = np.ones(10, dtype=np.bool)
+print(scores)
+
+
+
+
+
+
+
+
+
+
+
